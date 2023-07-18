@@ -18,17 +18,6 @@ const reconnect = async options => {
   }
 }
 
-// Retry the message a maximum of 5 times
-const attempt = async (callback, retry = 0) => {
-  try {
-    await callback()
-    return true
-  } catch (error) {
-    if (retry < 5) attempt(callback, retry + 1)
-    else return false
-  }
-}
-
 const connect = async options => {
   try {
     // Extract the exchange, queue, and credentials from the options
@@ -128,25 +117,34 @@ const listen = async (queue, events) => {
   try {
     // Consume messages that are sent to the queue
     await channel.consume(queue, async message => {
+      // Parse out the properties and data from the message
       const { properties, content } = message
       const data = JSON.parse(content.toString())
+      const type = properties.type || data.eventType
 
       // Grab the event from the events object
-      const event = events[properties.type] || events[data.eventType]
+      const event = events[type]
 
-      // If the event doesn't exist then acknowledge it and end execution
+      // If the event doesn't exist then acknowledge the message and end execution
       if (!event) return channel.ack(message)
 
-      // Pass the parsed message data to the event callback
-      const callback = () => event(data)
+      const callback = async (retry = 0) => {
+        try {
+          // Process the message
+          await event(data)
 
-      // Attempt the callback 5 times before failing the message
-      const success = await attempt(callback)
+          // If no error was thrown then acknowledge the message
+          channel.ack(message)
+        } catch (error) {
+          logger.error(`Message type ${type} failed on attempt ${retry + 1} on the ${queue} queue at ${new Date()}`)
+          
+          // Attempt the event callback a maximum of 5 times
+          if (retry < 5) callback(retry + 1)
 
-      // If the message succeeded then acknowledge it
-      if (success) channel.ack(message)
-      // If the message failed then send it to the dead letter exchange
-      else channel.reject(message, false)
+          // Send the message to the dead letter queue
+          else channel.reject(message, false)
+        }
+      }
     })
   } catch (error) {
     logger.error('Rabbit.listen', error)
