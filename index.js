@@ -8,16 +8,6 @@ EventEmitter.defaultMaxListeners = 100
 let connection = null
 let channel = null
 
-// Reconnect to rabbit after waiting 5 seconds
-const reconnect = async options => {
-  try {
-    logger.info('Attempting to reconnect in 5 seconds...')
-    setTimeout(() => connect(options), 5000)
-  } catch (error) {
-    logger.error('Rabbit.reconnect', error)
-  }
-}
-
 const connect = async options => {
   try {
     // Extract the exchange, queue, and credentials from the options
@@ -31,19 +21,13 @@ const connect = async options => {
     connection = connection
       ? connection
       : await amqplib.connect(
-          `amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@${RABBIT_HOST}:${RABBIT_PORT}/`
+          `amqp://${RABBIT_USER}:${RABBIT_PASSWORD}@${RABBIT_HOST}:${RABBIT_PORT}/`,
+          { reconnect: true }
         )
 
     // Add event listeners to reconnect when the connection is lost
-    connection.once('close', async () => {
-      logger.error('Rabbit connection closed')
-      reconnect(options)
-    })
-
-    connection.once('error', async error => {
-      logger.error('Rabbit connection error', error)
-      reconnect(options)
-    })
+    connection.once('close', async () => logger.error('Rabbit connection closed'))
+    connection.once('error', async error => logger.error('Rabbit connection error', error))
 
     // Get the rabbit channel, otherwise make one
     channel = channel ? channel : await connection.createChannel()
@@ -136,11 +120,14 @@ const listen = async (queue, events) => {
           // If no error was thrown then acknowledge the message
           channel.ack(message)
         } catch (error) {
-          logger.error(`Message type ${type} failed on attempt ${retry + 1} on the ${queue} queue at ${new Date()}`)
-          
+          logger.error(
+            `Message type ${type} failed on attempt ${
+              retry + 1
+            } on the ${queue} queue at ${new Date()}`
+          )
+
           // Attempt the event callback a maximum of 5 times
           if (retry < 5) callback(retry + 1)
-
           // Send the message to the dead letter queue
           else channel.reject(message, false)
         }
