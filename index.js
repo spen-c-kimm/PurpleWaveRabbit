@@ -104,7 +104,7 @@ const send = async options => {
     )
 
     // Publish the message to the queue
-    if (queue) await channel.sendToQueue(queueName, legacyData)
+    if (queue) await channel.sendToQueue(queue, legacyData)
 
     // Publish the message to the exchange
     if (exchange) channel.publish(exchange, '', legacyData, { type })
@@ -145,6 +145,8 @@ const listen = async (queue, events) => {
           else channel.reject(message, false)
         }
       }
+
+      await callback()
     })
   } catch (error) {
     logger.error('Rabbit.listen', error)
