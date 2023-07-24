@@ -119,11 +119,12 @@ const listen = async (queue, events) => {
     await channel.consume(queue, async message => {
       // Parse out the properties and data from the message
       const { properties, content } = message
+      const { type, headers } = properties
       const data = JSON.parse(content.toString())
-      const type = properties.type || data.eventType
+      const eventType = type || data.eventType
 
       // Grab the event from the events object
-      const event = events[type]
+      const event = events[eventType]
 
       // If the event doesn't exist then acknowledge the message and end execution
       if (!event) return channel.ack(message)
@@ -131,18 +132,18 @@ const listen = async (queue, events) => {
       const callback = async (retry = 0) => {
         try {
           // Process the message
-          await event(data)
+          await event({ ...data, headers })
 
           // If no error was thrown then acknowledge the message
           channel.ack(message)
         } catch (error) {
-          logger.error(`Message type ${type} failed on attempt ${retry + 1} on the ${queue} queue at ${new Date()}`)
+          logger.error(`Message type ${eventType} failed on attempt ${retry + 1} on the ${queue} queue at ${new Date()}`)
           
           // Attempt the event callback a maximum of 5 times
           if (retry < 5) callback(retry + 1)
 
-          // Send the message to the dead letter queue
-          else channel.reject(message, false)
+          // Send the message to the dead letter queue with the original queue name in the headers
+          else channel.reject(message, false, false, { queue })
         }
       }
 
